@@ -46,7 +46,7 @@ where
                 &self.service_name,
                 &self.host_name,
                 &timestamp,
-            )
+            );
         }
 
         // Propagate to otel logger
@@ -99,7 +99,7 @@ pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLogger
     let mut keys = vec![KeyValue::new(SERVICE_NAME_KEY, config.service_name.clone())];
     if let Some(resource_attributes) = config.resource_attributes {
         for attribute in resource_attributes {
-            keys.push(KeyValue::new(attribute.key, attribute.value))
+            keys.push(KeyValue::new(attribute.key, attribute.value));
         }
     }
     let mut logger_provider_builder = LoggerProvider::builder()

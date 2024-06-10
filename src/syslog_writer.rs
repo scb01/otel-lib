@@ -7,7 +7,7 @@ use humantime::format_rfc3339_millis;
 use log::Record;
 
 pub(crate) fn write_syslog_format(
-    record: &Record,
+    record: &Record<'_>,
     service_name: &str,
     host_name: &str,
     timestamp: &SystemTime,

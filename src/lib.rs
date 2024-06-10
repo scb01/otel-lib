@@ -93,7 +93,7 @@ fn init_metrics(config: Config) -> (Option<Registry>, SdkMeterProvider) {
     let mut keys = vec![KeyValue::new(SERVICE_NAME_KEY, config.service_name.clone())];
     if let Some(resource_attributes) = config.resource_attributes {
         for attribute in resource_attributes {
-            keys.push(KeyValue::new(attribute.key, attribute.value))
+            keys.push(KeyValue::new(attribute.key, attribute.value));
         }
     }
     let mut meter_provider_builder = SdkMeterProvider::builder().with_resource(Resource::new(keys));
