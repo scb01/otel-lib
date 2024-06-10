@@ -1,14 +1,81 @@
 # Project
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+A simple framework that helps setup and export metrics, logs, (and in the future distributed tracing) using Open Telemetry for your component.
+Logs are instrumented using the standard [log crate macros] (https://docs.rs/log/latest/log/), written to `stderr` in the [syslog format](https://www.rfc-editor.org/rfc/rfc5424#page-8), and available to exported to log repositories that support OTLP/gRPC.
+Metrics are instrumented using the [open telemetry sdk] (https://github.com/open-telemetry/opentelemetry-rust), can be converted to Prometheus, and available to be exported to metric repositories that support OTLP/gRPC.
 
-As the maintainer of this project, please make a few updates:
+The project also includes a sample app that demonstrates how to use the framework.
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+### Configuration
+The framework is configurable using the `Config` struct to setup
+* service name
+* 0 or more metrics export targets, where each target is a metrics repository that supports OTLP/gRPC
+* Enable Prometheus support. When enabled, the framework will translate the instrumented OTEL metrics into Prometheus metrics and provide a HTTP endpoint that can be scraped by external Prometheus scrapers
+* Enable metrics to be emitted to stdout. These will show up as pretty printed JSON
+* 0 or more Log export targets, where each target is a log repository that supports OTLP/gRPC.
+* Enable logs to be emitted to stderr. These will show up as logs in the [syslog format](https://www.rfc-editor.org/rfc/rfc5424#page-8).
+
+#### How to set it up
+Do the following as early as you can in your control flow
+~~~
+// Configure
+let metric_targets = vec![MetricsExportTarget {
+        url: "http://localhost:4317".to_string(),
+        frequency_secs: 30,
+        timeout: 15,
+    }];
+
+let log_targets = vec![LogsExportTarget {
+    url: "http://localhost:4317".to_string(),
+    frequency_secs: 10,
+    timeout: 15,
+}];
+
+let config = Config {
+    service_name: "myapp".to_owned(),
+    emit_metrics_to_stdout: true,
+    emit_logs_to_stderr: true,
+    metrics_export_targets: Some(metric_targets),
+    log_export_targets: Some(log_targets),
+    ..Config::default()
+};
+~~~
+
+#### Initialize and run
+~~~
+let obs_long_running_task = Otel::new(config).run();
+~~~
+
+// Drive the task using something like
+~~~
+ _ = tokio::join!(obs_long_running_task);
+~~~
+
+This initializes a static item STATIC_METRICS of type StaticMetrics that you can tweak to instrument metrics for you code.
+
+#### Instrument metrics
+~~~
+// Add a metric to StaticMetrics
+pub struct StaticMetrics {
+    pub requests: Counter<u64>,
+    ...
+
+// Initialize the metric
+    let meter = global::meter_provider().meter(METER_NAME);
+    StaticMetrics {
+        requests: meter.u64_counter("requests").init(),
+        ...
+    }
+
+// add a data point where needed
+ STATIC_METRICS.requests.add(1, &[]);
+~~~
+
+#### Instrument Logs
+For log instrumentation, use the standard log::crate macros.
+
+#### Instrument Traces
+Traces: TBD
 
 ## Contributing
 
