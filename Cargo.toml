@@ -1,0 +1,58 @@
+[package]
+name = "otel-lib"
+version = "0.1.0"
+authors = ["Azure Edge Devs"]
+license = "MIT"
+edition = "2021"
+
+
+[dependencies]
+axum = "0.6"
+env_filter = "0.1"
+humantime = "2.1"
+hyper = { version = "0.14", features = ["http1", "server"] }
+log = { version = "0.4", default-features = false }
+nix = { version = "0.27", default-features = false, features = [
+	"process", "hostname",
+] }
+opentelemetry = { version = "0.22", features = ["metrics", "logs"]}
+opentelemetry-otlp = { version ="0.15", features = ["grpc-tonic", "metrics", "logs"]}
+opentelemetry-prometheus = {version = "0.15" }
+opentelemetry_sdk =  {version = "0.22", features = ["metrics", "logs", "rt-tokio", "testing", "logs_level_enabled"]}
+opentelemetry-stdout =  {version = "0.3", features = ["metrics"]}
+prometheus = "0.13"
+serde = { version = "1", features = [
+	"derive",
+	"rc",
+] }
+serde_json = { version = "1.0", default-features = false, features = [
+	"alloc",
+] }
+tokio = { version = "1", default-features = false, features = [
+	"full",
+] }
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
+
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+default_trait_access = "allow"
+enum_variant_names = "allow"
+let_and_return = "allow"
+let_unit_value = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_inception = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# TODO(rustup): Buggy lint: https://github.com/rust-lang/rust-clippy/issues/12279
+no_effect_underscore_binding = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_field_names = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+type_complexity = "allow"

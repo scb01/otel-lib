@@ -1,0 +1,44 @@
+[package]
+name = "sample-app"
+version = "0.1.0"
+authors = ["Azure Edge Devs"]
+license = "MIT"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.5", features=["derive"] }
+log = { version = "0.4", default-features = false }
+otel-lib = { path = "../.." }
+once_cell = "1.19"
+opentelemetry = { version = "0.22", features = ["metrics", "logs"]}
+rand = "0.8"
+tokio = { version = "1", default-features = false, features = [
+	"full",
+] }
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
+
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+default_trait_access = "allow"
+enum_variant_names = "allow"
+let_and_return = "allow"
+let_unit_value = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_inception = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# TODO(rustup): Buggy lint: https://github.com/rust-lang/rust-clippy/issues/12279
+no_effect_underscore_binding = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_field_names = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+type_complexity = "allow"

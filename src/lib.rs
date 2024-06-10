@@ -1,0 +1,208 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+use std::time::Duration;
+
+use log::{error, info, warn};
+
+use hyper::StatusCode;
+use opentelemetry::{global, KeyValue};
+
+use axum::{http, Extension};
+
+use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
+use opentelemetry_sdk::{
+    logs::LoggerProvider,
+    metrics::{
+        reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
+        PeriodicReader, SdkMeterProvider,
+    },
+    runtime, Resource,
+};
+use opentelemetry_stdout::MetricsExporterBuilder;
+use prometheus::{Encoder, Registry, TextEncoder};
+
+use self::config::Config;
+
+pub mod config;
+pub mod loggers;
+pub mod syslog_writer;
+
+pub struct Otel {
+    pub registry: Option<Registry>,
+    meter_provider: SdkMeterProvider,
+    logger_provider: Option<LoggerProvider>,
+}
+
+impl Otel {
+    pub fn new(config: Config) -> Otel {
+        let logger_provider = match loggers::init_logs(config.clone()) {
+            Ok(logger_provider) => Some(logger_provider),
+            Err(e) => {
+                warn!("unable to initialize otel logger as another library has already initialized a global logger:{:?}",e);
+                None
+            }
+        };
+
+        let (registry, meter_provider) = init_metrics(config);
+        Otel {
+            registry,
+            meter_provider,
+            logger_provider,
+        }
+    }
+
+    /// Long running tasks for otel propagation.
+    pub async fn run(&self) {
+        if let Some(registry) = &self.registry {
+            let _ = httpserver_init(9600, registry.clone()).await;
+        }
+    }
+
+    /// Graceful shutdown that flushes any pending metrics and logs to the exporter.
+    pub fn shutdown(&self) {
+        if let Err(metrics_error) = self.meter_provider.force_flush() {
+            warn!(
+                "ecountered error while flushing metrics: {:?}",
+                metrics_error
+            );
+        }
+        if let Err(metrics_error) = self.meter_provider.shutdown() {
+            warn!(
+                "ecountered error while shutting down meter provider: {:?}",
+                metrics_error
+            );
+        }
+
+        if let Some(mut logger_provider) = self.logger_provider.clone() {
+            logger_provider.force_flush();
+            logger_provider.try_shutdown();
+        }
+    }
+}
+
+/// Initialize metrics based on passed in config.
+/// This function will setup metrics exporters, create a Prometheus registry if enabled,
+/// setup the stdout metrics writer if enabled, and initializes STATIC Metrics.
+///
+/// Returns the Prometheus Registry or None if Prometheus was disabled.
+///
+fn init_metrics(config: Config) -> (Option<Registry>, SdkMeterProvider) {
+    let mut meter_provider_builder = SdkMeterProvider::builder().with_resource(Resource::new(
+        vec![KeyValue::new("service.name", config.service_name)],
+    ));
+
+    // Setup Prometheus Registry if configured
+    let registry = if config.prometheus_config.is_some() {
+        let registry = prometheus::Registry::new();
+        match opentelemetry_prometheus::exporter()
+            .with_registry(registry.clone())
+            .build()
+        {
+            Ok(exporter) => {
+                meter_provider_builder = meter_provider_builder.with_reader(exporter);
+                Some(registry)
+            }
+            Err(e) => {
+                error!("unable to setup prometheus endpoint due to: {:?}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Add Metrics Exporters
+    if let Some(export_targets_list) = config.metrics_export_targets {
+        for export_target in export_targets_list {
+            let export_config = ExportConfig {
+                endpoint: export_target.url.clone(),
+                timeout: Duration::from_secs(export_target.timeout),
+                protocol: Protocol::Grpc,
+            };
+            let exporter = match opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_export_config(export_config)
+                .build_metrics_exporter(
+                    // TODO: Make this also part of config?
+                    Box::new(DefaultAggregationSelector::new()),
+                    Box::new(DefaultTemporalitySelector::new()),
+                ) {
+                Ok(exporter) => exporter,
+                Err(e) => {
+                    error!(
+                        "unable to set export to {} due to {:?}",
+                        export_target.url, e
+                    );
+                    continue;
+                }
+            };
+
+            let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+                .with_interval(Duration::from_secs(export_target.interval_secs))
+                .build();
+            meter_provider_builder = meter_provider_builder.with_reader(reader);
+        }
+    }
+
+    if config.emit_metrics_to_stdout {
+        let exporter = MetricsExporterBuilder::default()
+            .with_encoder(|writer, data| {
+                if let Err(e) = serde_json::to_writer_pretty(writer, &data) {
+                    error!("writing metrics to log failed due to: {:?}", e);
+                }
+                Ok(())
+            })
+            .build();
+
+        let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
+        meter_provider_builder = meter_provider_builder.with_reader(reader);
+    }
+
+    let meter_provider = meter_provider_builder.build();
+    global::set_meter_provider(meter_provider.clone());
+
+    (registry, meter_provider)
+}
+
+/// Setup the http server for the prometheus end point
+///
+/// # Arguments
+/// * `http_port` - The port to listen on for http requests
+/// * `registry` - The prometheus registry that contains the metrics
+///
+/// # Errors
+/// * `hyper::Error` - If the http server fails to start
+async fn httpserver_init(http_port: u16, registry: Registry) -> Result<(), hyper::Error> {
+    info!("initializing prometheus metrics endpoint");
+    let router = axum::Router::new()
+        .route("/metrics", axum::routing::get(metrics_handler))
+        .layer(Extension(registry));
+    axum::Server::bind(&([0u8; 4], http_port).into())
+        .serve(router.into_make_service())
+        .await
+}
+
+async fn metrics_handler(
+    Extension(data): Extension<Registry>,
+) -> axum::response::Result<impl axum::response::IntoResponse> {
+    let mut buffer = vec![];
+    let encoder = TextEncoder::new();
+    let metric_families = data.gather();
+    match encoder.encode(&metric_families, &mut buffer) {
+        Ok(()) => {
+            let content_type = encoder.format_type().to_owned();
+            let body = String::from_utf8_lossy(&buffer).into_owned();
+            Ok((
+                StatusCode::OK,
+                [(http::header::CONTENT_TYPE, content_type)],
+                body,
+            ))
+        }
+        Err(e) => Ok((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(http::header::CONTENT_TYPE, "text".to_string())],
+            e.to_string(),
+        )),
+    }
+}

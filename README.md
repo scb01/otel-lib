@@ -2,7 +2,7 @@
 
 A simple framework that helps setup and export metrics, logs, (and in the future distributed tracing) using Open Telemetry for your component.
 Logs are instrumented using the standard [log crate macros] (https://docs.rs/log/latest/log/), written to `stderr` in the [syslog format](https://www.rfc-editor.org/rfc/rfc5424#page-8), and available to exported to log repositories that support OTLP/gRPC.
-Metrics are instrumented using the [open telemetry sdk] (https://github.com/open-telemetry/opentelemetry-rust), can be converted to Prometheus, and available to be exported to metric repositories that support OTLP/gRPC.
+Metrics are instrumented using the [open telemetry sdk] (https://crates.io/crates/opentelemetry), can be converted to Prometheus, and available to be exported to metric repositories that support OTLP/gRPC.
 
 The project also includes a sample app that demonstrates how to use the framework.
 
@@ -21,13 +21,13 @@ Do the following as early as you can in your control flow
 // Configure
 let metric_targets = vec![MetricsExportTarget {
         url: "http://localhost:4317".to_string(),
-        frequency_secs: 30,
+        interval_secs: 30,
         timeout: 15,
     }];
 
 let log_targets = vec![LogsExportTarget {
     url: "http://localhost:4317".to_string(),
-    frequency_secs: 10,
+    interval_secs: 10,
     timeout: 15,
 }];
 
