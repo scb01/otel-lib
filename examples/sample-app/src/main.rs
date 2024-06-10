@@ -4,7 +4,7 @@
 use clap::{arg, command, Parser};
 use log::{error, info};
 use otel_lib::{
-    config::{Config, LogsExportTarget, MetricsExportTarget},
+    config::{Attribute, Config, LogsExportTarget, MetricsExportTarget},
     Otel,
 };
 
@@ -45,12 +45,15 @@ async fn main() {
         log_export_targets: logs_targets,
         level: "info,hyper=off".to_owned(),
         service_name: "sample-app".to_owned(),
+        resource_attributes: Some(vec![Attribute {
+            key: "resource_key1".to_owned(),
+            value: "1".to_owned(),
+        }]),
         ..Config::default()
     };
 
-   
     let otel_component = Otel::new(config);
-     // Start the otel running task
+    // Start the otel running task
     let otel_long_running_task = otel_component.run();
     // initialize static metrics
     let _ = STATIC_METRICS.requests;

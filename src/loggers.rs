@@ -3,13 +3,16 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::{config::Config, syslog_writer};
+use crate::{config::Config, syslog_writer, SERVICE_NAME_KEY};
 use log::Level;
-use opentelemetry::logs::{AnyValue, LogRecordBuilder, Logger, Severity};
+use opentelemetry::{
+    logs::{AnyValue, LogRecordBuilder, Logger, Severity},
+    KeyValue,
+};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     logs::{BatchConfigBuilder, BatchLogProcessor, LoggerProvider},
-    runtime,
+    runtime, Resource,
 };
 
 pub(crate) struct OtelLogBridge<P, L>
@@ -93,7 +96,14 @@ const fn to_otel_severity(level: Level) -> Severity {
 }
 
 pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLoggerError> {
-    let mut logger_provider_builder = LoggerProvider::builder();
+    let mut keys = vec![KeyValue::new(SERVICE_NAME_KEY, config.service_name.clone())];
+    if let Some(resource_attributes) = config.resource_attributes {
+        for attribute in resource_attributes {
+            keys.push(KeyValue::new(attribute.key, attribute.value))
+        }
+    }
+    let mut logger_provider_builder = LoggerProvider::builder()
+        .with_config(opentelemetry_sdk::logs::Config::default().with_resource(Resource::new(keys)));
 
     let host_name = nix::unistd::gethostname()
         .map(|hostname| {

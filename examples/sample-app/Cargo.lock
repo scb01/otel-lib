@@ -1182,7 +1182,6 @@ dependencies = [
  "hyper",
  "log",
  "nix",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-prometheus",

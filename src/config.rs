@@ -9,6 +9,10 @@ use serde::Deserialize;
 pub struct Config {
     /// name of the component, for example "App"
     pub service_name: String,
+
+    /// Optional resource attributes
+    pub resource_attributes: Option<Vec<Attribute>>,
+
     /// Optional prometheus configuration if metrics are needed in Prometheus format as well as Otel.
     pub prometheus_config: Option<PrometheusConfig>,
     /// 0 or more metric export targets.
@@ -33,6 +37,7 @@ impl Default for Config {
             emit_metrics_to_stdout: false,
             emit_logs_to_stderr: true,
             level: "info".to_owned(),
+            resource_attributes: None,
         }
     }
 }
@@ -70,4 +75,10 @@ pub struct LogsExportTarget {
     pub interval_secs: u64,
     /// export timeout - how long to wait before timing out on a push to the target.
     pub timeout: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Attribute {
+    pub key: String,
+    pub value: String,
 }

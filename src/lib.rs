@@ -28,6 +28,8 @@ pub mod config;
 pub mod loggers;
 pub mod syslog_writer;
 
+pub(crate) const SERVICE_NAME_KEY: &str = "service.name";
+
 pub struct Otel {
     pub registry: Option<Registry>,
     meter_provider: SdkMeterProvider,
@@ -88,9 +90,13 @@ impl Otel {
 /// Returns the Prometheus Registry or None if Prometheus was disabled.
 ///
 fn init_metrics(config: Config) -> (Option<Registry>, SdkMeterProvider) {
-    let mut meter_provider_builder = SdkMeterProvider::builder().with_resource(Resource::new(
-        vec![KeyValue::new("service.name", config.service_name)],
-    ));
+    let mut keys = vec![KeyValue::new(SERVICE_NAME_KEY, config.service_name.clone())];
+    if let Some(resource_attributes) = config.resource_attributes {
+        for attribute in resource_attributes {
+            keys.push(KeyValue::new(attribute.key, attribute.value))
+        }
+    }
+    let mut meter_provider_builder = SdkMeterProvider::builder().with_resource(Resource::new(keys));
 
     // Setup Prometheus Registry if configured
     let registry = if config.prometheus_config.is_some() {
