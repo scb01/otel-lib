@@ -37,18 +37,23 @@ let config = Config {
     emit_logs_to_stderr: true,
     metrics_export_targets: Some(metric_targets),
     log_export_targets: Some(log_targets),
+    level: "info,hyper=off".to_owned(),
+    resource_attributes: Some(vec![Attribute {
+        key: "resource_key1".to_owned(),
+        value: "1".to_owned(),
+    }]),
     ..Config::default()
 };
 ~~~
 
 #### Initialize and run
 ~~~
-let obs_long_running_task = Otel::new(config).run();
+let otel_long_running_task = Otel::new(config).run();
 ~~~
 
 // Drive the task using something like
 ~~~
- _ = tokio::join!(obs_long_running_task);
+ _ = tokio::join!(otel_long_running_task);
 ~~~
 
 This initializes a static item STATIC_METRICS of type StaticMetrics that you can tweak to instrument metrics for you code.
