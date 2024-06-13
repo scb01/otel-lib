@@ -3,7 +3,11 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::{config::Config, syslog_writer, SERVICE_NAME_KEY};
+use crate::{
+    config::Config,
+    filtered_log_processor::{FilteredBatchConfig, FilteredBatchLogProcessor},
+    syslog_writer, SERVICE_NAME_KEY,
+};
 use log::Level;
 use opentelemetry::{
     logs::{AnyValue, LogRecordBuilder, Logger, Severity},
@@ -131,16 +135,32 @@ pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLogger
                 }
             };
 
-            let batch_log_processor = BatchLogProcessor::builder(exporter, runtime::Tokio)
-                .with_batch_config(
-                    BatchConfigBuilder::default()
-                        .with_scheduled_delay(Duration::from_secs(export_target.interval_secs))
-                        .with_max_export_timeout(Duration::from_secs(export_target.timeout))
-                        .build(),
-                )
-                .build();
-            logger_provider_builder =
-                logger_provider_builder.with_log_processor(batch_log_processor);
+            if let Some(export_severity) = export_target.export_severity {
+                let filtered_batch_config = FilteredBatchConfig {
+                    export_severity,
+                    scheduled_delay: Duration::from_secs(export_target.interval_secs),
+                    max_export_timeout: Duration::from_secs(export_target.timeout),
+                    ..Default::default()
+                };
+
+                let filtered_log_processor =
+                    FilteredBatchLogProcessor::builder(exporter, runtime::Tokio)
+                        .with_batch_config(filtered_batch_config)
+                        .build();
+                logger_provider_builder =
+                    logger_provider_builder.with_log_processor(filtered_log_processor);
+            } else {
+                let batch_log_processor = BatchLogProcessor::builder(exporter, runtime::Tokio)
+                    .with_batch_config(
+                        BatchConfigBuilder::default()
+                            .with_scheduled_delay(Duration::from_secs(export_target.interval_secs))
+                            .with_max_export_timeout(Duration::from_secs(export_target.timeout))
+                            .build(),
+                    )
+                    .build();
+                logger_provider_builder =
+                    logger_provider_builder.with_log_processor(batch_log_processor);
+            }
         }
     }
 

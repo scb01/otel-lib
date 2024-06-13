@@ -25,6 +25,7 @@ use prometheus::{Encoder, Registry, TextEncoder};
 use self::config::Config;
 
 pub mod config;
+mod filtered_log_processor;
 pub mod loggers;
 pub mod syslog_writer;
 

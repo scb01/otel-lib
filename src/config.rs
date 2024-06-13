@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use opentelemetry::logs::Severity;
 use serde::Deserialize;
 
 #[derive(Clone, Debug)]
@@ -75,6 +76,8 @@ pub struct LogsExportTarget {
     pub interval_secs: u64,
     /// export timeout - how long to wait before timing out on a push to the target.
     pub timeout: u64,
+    /// export severity - severity >= which to export
+    pub export_severity: Option<Severity>,
 }
 
 #[derive(Clone, Debug)]
