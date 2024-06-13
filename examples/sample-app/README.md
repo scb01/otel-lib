@@ -25,7 +25,7 @@ To run the app and check that everything is working as it should,
 docker run -d -p 4317:4317 otel/opentelemetry-collector:latest
 
 2) cargo run -- -n 3000 -o "http://localhost:4317"
-This will run the metric update loop 3000 times and will export metrics to the Otel collector once a second. You can see the metrics being ingested by tailing the Otel Collector's logs
+This will run the metric update loop 3000 times and will export metrics and logs to the Otel collector once a second. You can see the metrics & logs being ingested by tailing the Otel Collector's logs. [Note: only ERROR logs will appear in the Otel Collector as the sample has set the export filter to ERROR]
     docker logs <CONTAINER ID> -f
 
 3) while the app is running, do a `curl http://localhost:9600/metrics` to view the metrics in the Prometheus Format. You will see an output that looks like the following

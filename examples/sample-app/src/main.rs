@@ -28,12 +28,12 @@ async fn main() {
             let metric_targets = vec![MetricsExportTarget {
                 url: url.clone(),
                 interval_secs: 1,
-                timeout: 15,
+                timeout: 5,
             }];
             let logs_targets = vec![LogsExportTarget {
                 url,
                 interval_secs: 1,
-                timeout: 15,
+                timeout: 5,
                 export_severity: Some(Severity::Error),
             }];
             (Some(metric_targets), Some(logs_targets))

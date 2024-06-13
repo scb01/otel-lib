@@ -29,6 +29,7 @@ let log_targets = vec![LogsExportTarget {
     url: "http://localhost:4317".to_string(),
     interval_secs: 10,
     timeout: 15,
+    export_severity: Some(Severity::Error), // Applies an additional filter at the exporter level. This can be set to None if no additional filtering is required.
 }];
 
 let config = Config {

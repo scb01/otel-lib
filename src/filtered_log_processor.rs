@@ -1,14 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// This implementation is a slight adjustment of the code at
+// [BatchLogProcessor](https://github.com/open-telemetry/opentelemetry-rust/blob/b933bdd82dadbadedb42a1f572caba1e0b8b9391/opentelemetry-sdk/src/logs/log_processor.rs#L154)
+//
+// I've opened an issue on the opentelemetry_rust SDK repo: [1881](https://github.com/open-telemetry/opentelemetry-rust/issues/1881).
+// If that issue is accepted and addressed, this implementation will no longer be required.
+
 use crate::runtime::{RuntimeChannel, TrySend};
 use futures_channel::oneshot;
 use futures_util::{
     future::{self, Either},
     {pin_mut, stream, StreamExt as _},
 };
-#[cfg(feature = "logs_level_enabled")]
-use opentelemetry::logs::Severity;
+
 use opentelemetry::{
     global,
     logs::{LogError, LogResult, Severity},
@@ -32,7 +37,7 @@ const OTEL_BLRP_MAX_QUEUE_SIZE_DEFAULT: usize = 2_048;
 /// Default maximum batch size.
 const OTEL_BLRP_MAX_EXPORT_BATCH_SIZE_DEFAULT: usize = 512;
 
-/// A [`LogProcessor`] that asynchronously buffers log records and reports
+/// A [`LogProcessor`] that asynchronously buffers log records, applies a severity filter, and exports
 /// them at a pre-configured interval.
 pub struct FilteredBatchLogProcessor<R: RuntimeChannel> {
     message_sender: R::Sender<BatchMessage>,
