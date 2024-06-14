@@ -3,6 +3,7 @@
 
 use clap::{arg, command, Parser};
 use log::{error, info};
+use opentelemetry::logs::Severity;
 use otel_lib::{
     config::{Attribute, Config, LogsExportTarget, MetricsExportTarget},
     Otel,
@@ -27,12 +28,13 @@ async fn main() {
             let metric_targets = vec![MetricsExportTarget {
                 url: url.clone(),
                 interval_secs: 1,
-                timeout: 15,
+                timeout: 5,
             }];
             let logs_targets = vec![LogsExportTarget {
                 url,
                 interval_secs: 1,
-                timeout: 15,
+                timeout: 5,
+                export_severity: Some(Severity::Error),
             }];
             (Some(metric_targets), Some(logs_targets))
         }
@@ -57,6 +59,8 @@ async fn main() {
     let otel_long_running_task = otel_component.run();
     // initialize static metrics
     let _ = STATIC_METRICS.requests;
+
+    error!("Test error log. Only this log will be exported to the target");
 
     // Run this loop for n iterations
     let instrumentation_task = tokio::spawn(async move {

@@ -1071,6 +1071,9 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "env_filter",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
  "humantime",
  "hyper",
  "log",
