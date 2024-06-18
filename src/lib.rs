@@ -14,8 +14,9 @@ use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
 use opentelemetry_sdk::{
     logs::LoggerProvider,
     metrics::{
-        reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
-        PeriodicReader, SdkMeterProvider,
+        data::Temporality,
+        reader::{DefaultAggregationSelector, DefaultTemporalitySelector, TemporalitySelector},
+        InstrumentKind, PeriodicReader, SdkMeterProvider,
     },
     runtime, Resource,
 };
@@ -84,6 +85,24 @@ impl Otel {
     }
 }
 
+#[derive(Default, Debug)]
+/// A temporality selector that returns Delta for all instruments
+
+pub(crate) struct DeltaTemporalitySelector {}
+
+impl DeltaTemporalitySelector {
+    /// Create a new default temporality selector
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl TemporalitySelector for DeltaTemporalitySelector {
+    fn temporality(&self, _kind: InstrumentKind) -> Temporality {
+        Temporality::Delta
+    }
+}
+
 /// Initialize metrics based on passed in config.
 /// This function will setup metrics exporters, create a Prometheus registry if enabled,
 /// setup the stdout metrics writer if enabled, and initializes STATIC Metrics.
@@ -127,13 +146,24 @@ fn init_metrics(config: Config) -> (Option<Registry>, SdkMeterProvider) {
                 timeout: Duration::from_secs(export_target.timeout),
                 protocol: Protocol::Grpc,
             };
+
+            let temporality_selector: Box<dyn TemporalitySelector> =
+                if let Some(temporality) = export_target.temporality {
+                    match temporality {
+                        Temporality::Delta => Box::new(DeltaTemporalitySelector::new()),
+                        _ => Box::new(DefaultTemporalitySelector::new()),
+                    }
+                } else {
+                    Box::new(DefaultTemporalitySelector::new())
+                };
+
             let exporter = match opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_export_config(export_config)
                 .build_metrics_exporter(
                     // TODO: Make this also part of config?
                     Box::new(DefaultAggregationSelector::new()),
-                    Box::new(DefaultTemporalitySelector::new()),
+                    temporality_selector,
                 ) {
                 Ok(exporter) => exporter,
                 Err(e) => {
