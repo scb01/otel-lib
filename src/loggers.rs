@@ -4,7 +4,7 @@
 use std::time::{Duration, SystemTime};
 
 use crate::{
-    config::Config,
+    config::{Config, RegexFilter},
     filtered_log_processor::{FilteredBatchConfig, FilteredBatchLogProcessor},
     syslog_writer, SERVICE_NAME_KEY,
 };
@@ -18,6 +18,7 @@ use opentelemetry_sdk::{
     logs::{BatchConfigBuilder, BatchLogProcessor, LoggerProvider},
     runtime, Resource,
 };
+use regex::Regex;
 
 pub(crate) struct OtelLogBridge<P, L>
 where
@@ -28,6 +29,7 @@ where
     std_err_enabled: bool,
     host_name: String,
     service_name: String,
+    regex_disallow_filters: Vec<(Regex, Regex)>,
     _phantom: std::marker::PhantomData<P>, // P is not used in this struct
 }
 
@@ -42,6 +44,16 @@ where
     }
 
     fn log(&self, record: &log::Record<'_>) {
+        let body = record.args().to_string();
+        for (module_regex, log_text_regx) in &self.regex_disallow_filters {
+            if !module_regex.is_match(record.target()) {
+                continue;
+            }
+            if log_text_regx.is_match(&body) {
+                return;
+            }
+        }
+
         let timestamp = SystemTime::now();
 
         if self.std_err_enabled {
@@ -60,7 +72,7 @@ where
                 .with_severity_number(to_otel_severity(record.level()))
                 .with_severity_text(record.level().as_str())
                 .with_timestamp(timestamp)
-                .with_body(AnyValue::from(record.args().to_string()))
+                .with_body(AnyValue::from(body))
                 .build(),
         );
     }
@@ -78,12 +90,39 @@ where
         service_name: String,
         std_err_enabled: bool,
         host_name: String,
+        regex_filters: Option<Vec<RegexFilter>>,
     ) -> Self {
+        let mut regex_disallow_filters = Vec::new();
+
+        if let Some(regex_filters) = regex_filters {
+            for regex_filter in regex_filters {
+                let module_filter = match Regex::new(&regex_filter.module_regex) {
+                    Ok(re) => re,
+                    Err(e) => {
+                        eprintln!("unable to create regex filter for pattern {} due to error: {e:?}, ignoring", regex_filter.module_regex);
+                        continue;
+                    }
+                };
+
+                let log_text_filter = match Regex::new(&regex_filter.log_text_regex) {
+                    Ok(re) => match regex_filter.action {
+                        crate::config::FilterAction::DISALLOW => re,
+                    },
+                    Err(e) => {
+                        eprintln!("unable to create regex filter for pattern {} due to error: {e:?}, ignoring", regex_filter.log_text_regex);
+                        continue;
+                    }
+                };
+                regex_disallow_filters.push((module_filter, log_text_filter));
+            }
+        }
+
         OtelLogBridge {
             logger: provider.versioned_logger(service_name.clone(), None, None, None),
             std_err_enabled,
             host_name,
             service_name,
+            regex_disallow_filters,
             _phantom: Default::default(),
         }
     }
@@ -172,6 +211,7 @@ pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLogger
         config.service_name,
         config.emit_logs_to_stderr,
         host_name,
+        config.regex_filters,
     );
 
     // Setup filtering

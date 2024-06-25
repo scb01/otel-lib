@@ -27,6 +27,8 @@ pub struct Config {
     pub emit_logs_to_stderr: bool,
     /// log level, specified as logging directives and controllable on a per-module basis
     pub level: String,
+    /// regex filters
+    pub regex_filters: Option<Vec<RegexFilter>>,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             emit_logs_to_stderr: true,
             level: "info".to_owned(),
             resource_attributes: None,
+            regex_filters: None,
         }
     }
 }
@@ -87,4 +90,16 @@ pub struct LogsExportTarget {
 pub struct Attribute {
     pub key: String,
     pub value: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegexFilter {
+    pub module_regex: String,
+    pub log_text_regex: String,
+    pub action: FilterAction,
+}
+
+#[derive(Clone, Debug)]
+pub enum FilterAction {
+    DISALLOW,
 }

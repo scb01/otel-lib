@@ -6,7 +6,9 @@ use log::{error, info};
 use opentelemetry::logs::Severity;
 use opentelemetry_sdk::metrics::data::Temporality;
 use otel_lib::{
-    config::{Attribute, Config, LogsExportTarget, MetricsExportTarget, PrometheusConfig},
+    config::{
+        Attribute, Config, LogsExportTarget, MetricsExportTarget, PrometheusConfig, RegexFilter,
+    },
     Otel,
 };
 
@@ -55,6 +57,11 @@ async fn main() {
             value: "1".to_owned(),
         }]),
         prometheus_config,
+        regex_filters: Some(vec![RegexFilter {
+            module_regex: "^sensitive_app".to_owned(),
+            log_text_regex: "[.]*sensitive[.]*".to_owned(),
+            action: otel_lib::config::FilterAction::DISALLOW,
+        }]),
         ..Config::default()
     };
 
@@ -65,6 +72,8 @@ async fn main() {
     let _ = STATIC_METRICS.requests;
 
     error!("Test error log. Only this log will be exported to the target");
+    info!(target: "sensitive_app", "This contains sensitive text and will be filtered out.");
+    info!(target: "non_sensitive_app", "This contains sensitive text, but will not be filtered out.");
 
     // Run this loop for n iterations
     let instrumentation_task = tokio::spawn(async move {

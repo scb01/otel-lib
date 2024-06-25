@@ -1084,6 +1084,7 @@ dependencies = [
  "opentelemetry-stdout",
  "opentelemetry_sdk",
  "prometheus",
+ "regex",
  "serde",
  "serde_json",
 ]

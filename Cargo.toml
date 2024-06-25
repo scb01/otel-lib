@@ -24,6 +24,7 @@ opentelemetry-prometheus = {version = "0.15" }
 opentelemetry_sdk =  {version = "0.22", features = ["metrics", "logs", "rt-tokio", "testing", "logs_level_enabled"]}
 opentelemetry-stdout =  {version = "0.3", features = ["metrics"]}
 prometheus = "0.13"
+regex = "1.10"
 serde = { version = "1", features = [
 	"derive",
 	"rc",

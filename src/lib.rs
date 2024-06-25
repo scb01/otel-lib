@@ -76,13 +76,13 @@ impl Otel {
     pub fn shutdown(&self) {
         if let Err(metrics_error) = self.meter_provider.force_flush() {
             warn!(
-                "ecountered error while flushing metrics: {:?}",
+                "encountered error while flushing metrics: {:?}",
                 metrics_error
             );
         }
         if let Err(metrics_error) = self.meter_provider.shutdown() {
             warn!(
-                "ecountered error while shutting down meter provider: {:?}",
+                "encountered error while shutting down meter provider: {:?}",
                 metrics_error
             );
         }
