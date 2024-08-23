@@ -27,8 +27,6 @@ where
     logger: L,
     std_err_enabled: bool,
     host_name: String,
-    #[allow(dead_code)]
-    service_name: String,
     service_name_with_iana_number: String,
     _phantom: std::marker::PhantomData<P>, // P is not used in this struct
 }
@@ -77,20 +75,19 @@ where
 {
     pub(crate) fn new(
         provider: &P,
-        service_name: String,
+        service_name: &str,
         enterprise_number: Option<String>,
         std_err_enabled: bool,
         host_name: String,
     ) -> Self {
         let service_name_with_iana_number = match enterprise_number {
             Some(enterprise_number) => format!("{service_name}@{enterprise_number}"),
-            None => service_name.clone(),
+            None => service_name.to_string(),
         };
         OtelLogBridge {
-            logger: provider.versioned_logger(service_name.clone(), None, None, None),
+            logger: provider.versioned_logger(service_name.to_string(), None, None, None),
             std_err_enabled,
             host_name,
-            service_name,
             service_name_with_iana_number,
             _phantom: Default::default(),
         }
@@ -177,7 +174,7 @@ pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLogger
     // Setup Log Bridge to OTEL
     let otel_log_bridge = OtelLogBridge::new(
         &logger_provider,
-        config.service_name,
+        &config.service_name,
         config.enterprise_number,
         config.emit_logs_to_stderr,
         host_name,
