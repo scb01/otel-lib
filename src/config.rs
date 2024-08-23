@@ -12,6 +12,9 @@ pub struct Config {
     /// name of the component, for example "App"
     pub service_name: String,
 
+    /// enterprise number, as specified here [Private Enterprise Numbers](https://www.iana.org/assignments/enterprise-numbers/)
+    pub enterprise_number: Option<String>,
+
     /// Optional resource attributes
     pub resource_attributes: Option<Vec<Attribute>>,
 
@@ -33,6 +36,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             service_name: "App".to_owned(),
+            enterprise_number: None,
             prometheus_config: None,
             metrics_export_targets: None,
             log_export_targets: None,

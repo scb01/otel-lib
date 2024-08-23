@@ -38,6 +38,7 @@ let prometheus_config = Some(PrometheusConfig { port: 9090 });
 
 let config = Config {
     service_name: "myapp".to_owned(),
+    enterprise_number: Some("123".to_owned()), // optionally, the IANA enterprise number
     emit_metrics_to_stdout: true,
     emit_logs_to_stderr: true,
     metrics_export_targets: Some(metric_targets),
