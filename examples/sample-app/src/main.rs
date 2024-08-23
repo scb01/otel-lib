@@ -50,6 +50,7 @@ async fn main() {
         log_export_targets: logs_targets,
         level: "info,hyper=off".to_owned(),
         service_name: "sample-app".to_owned(),
+        enterprise_number: Some("123".to_owned()),
         resource_attributes: Some(vec![Attribute {
             key: "resource_key1".to_owned(),
             value: "1".to_owned(),
