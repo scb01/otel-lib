@@ -20,7 +20,6 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tonic::{async_trait, transport::Server, Request, Response, Status};
 
 pub struct MockServer {
-    pub socketaddr: String,
     pub endpoint: String,
     pub shutdown_tx: Sender<()>,
     pub metrics_rx: Receiver<ExportMetricsServiceRequest>,
@@ -51,7 +50,6 @@ impl MockServer {
         );
 
         Self {
-            socketaddr,
             endpoint,
             shutdown_tx,
             metrics_rx,
