@@ -178,17 +178,16 @@ async fn run_tests(
     assert_eq!(log_message, Value::StringValue(warn_log.to_owned()));
 
     let body = reqwest::get("http://127.0.0.1:9090/metrics")
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
 
-        // TODO: Parse the response using a prometheus parser and assert both format compliance
-        // and expected metrics.
-        assert!(
-            body.contains("test_counter"),
-            "did not find expected metric test_counter in server response",
-        );
-
+    // TODO: Parse the response using a prometheus parser and assert both format compliance
+    // and expected metrics.
+    assert!(
+        body.contains("test_counter"),
+        "did not find expected metric test_counter in server response",
+    );
 }
