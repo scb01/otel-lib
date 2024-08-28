@@ -64,6 +64,7 @@ if [ -z "${SUMMARY_ONLY:+_}" ]; then
         --output-dir="${OUTPUT_DIRECTORY}" \
         --manifest-path="${MANIFEST}" \
         --verbose \
+        --ignore-filename-regex tests \
         --html \
         report
 fi
@@ -83,14 +84,11 @@ threshold_file="$crate_dir/coverage_threshold.toml"
 
 if [ -f "$threshold_file" ]; then
     grep -Eo '^\s*[^#][^=]+=\s*[0-9]+' "$threshold_file" | while read -r line; do
-        # Remove leading and trailing spaces and quotes from the crate name and the threshold value
-        crate_name=$(echo "$line" | awk -F= '{gsub(/^[ \t]+|[ \t]+$/, "", $1); print $1}')
         coverage_threshold=$(echo "$line" | awk -F= '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
-
-        coverage_percentage=$(grep -oP "${crate_name//\"}/\s*\|\s*\K[0-9.]+%" "${OUTPUT_DIRECTORY}/summary.md" | tr -d '%')
+        coverage_percentage=$(grep Summary "${OUTPUT_DIRECTORY}/summary.md" | awk -F* '{print $7}' | tr -d '%')
 
         if (( $(echo "${coverage_percentage} < ${coverage_threshold}" | bc -l) )); then
-            echo "ERROR: Coverage for crate '${crate_name}' is below the threshold (${coverage_percentage}% < ${coverage_threshold}%)."
+            echo "ERROR: Coverage is below the threshold (${coverage_percentage}% < ${coverage_threshold}%)."
             exit 1
         fi
     done
