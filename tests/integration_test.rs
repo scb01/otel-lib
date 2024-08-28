@@ -183,7 +183,7 @@ async fn run_tests(
         .text()
         .await
         .unwrap();
-    println!("{body}");
+    
     // TODO: Parse the response using a prometheus parser and assert both format compliance
     // and expected metrics.
     assert!(
