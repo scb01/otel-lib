@@ -97,7 +97,7 @@ async fn end_to_end_test() {
     }
 
     // TODO: troubleshoot why calling `otel_component.shutdown()` blocks test execution here.
-    
+
     filtered_target.shutdown_tx.send(()).await.unwrap();
     unfiltered_target.shutdown_tx.send(()).await.unwrap();
 }
