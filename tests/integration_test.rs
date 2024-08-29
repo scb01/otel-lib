@@ -183,9 +183,7 @@ async fn run_tests(
         .text()
         .await
         .unwrap();
-    
-    // TODO: Parse the response using a prometheus parser and assert both format compliance
-    // and expected metrics.
+
     assert!(
         body.contains("test_counter_total{otel_scope_name=\"end_to_end_test\"} 1"),
         "did not find expected metric test_counter in server response",
