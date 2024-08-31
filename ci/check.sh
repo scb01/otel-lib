@@ -60,7 +60,7 @@ MANIFEST="$(
 
 # NOTE: Require standard lints.
 cargo metadata --format-version=1 --manifest-path="${MANIFEST}" --no-deps \
-| jq -r '.packages[].targets[].src_path | select(startswith($cwd))' \
+| jq -r '.packages[].targets[].src_path | select(startswith($cwd)) | select(contains("tests")|not)' \
     --arg cwd "${CURDIR}" \
 | while read -r FILE; do
     grep -q '^#!\[deny(rust_2018_idioms)\]$' "${FILE}"

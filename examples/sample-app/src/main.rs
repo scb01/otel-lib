@@ -6,7 +6,7 @@ use log::{error, info};
 use opentelemetry::logs::Severity;
 use opentelemetry_sdk::metrics::data::Temporality;
 use otel_lib::{
-    config::{Attribute, Config, LogsExportTarget, MetricsExportTarget, PrometheusConfig},
+    config::{Attribute, Config, LogsExportTarget, MetricsExportTarget, Prometheus},
     Otel,
 };
 
@@ -24,7 +24,7 @@ async fn main() {
     // App expects 2 parameters. 1) '-n' that controls the number of iterations, and 2) '-o' to specify an otel compatible repo.
     let args = Args::parse();
 
-    let prometheus_config = Some(PrometheusConfig { port: 9090 });
+    let prometheus_config = Some(Prometheus { port: 9090 });
     let (metrics_targets, logs_targets) = match args.otel_repo_url {
         Some(url) => {
             let metric_targets = vec![MetricsExportTarget {

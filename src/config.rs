@@ -92,3 +92,73 @@ pub struct Attribute {
     pub key: String,
     pub value: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use opentelemetry::logs::Severity;
+    use opentelemetry_sdk::metrics::data::Temporality;
+
+    use super::{Attribute, Config, LogsExportTarget, MetricsExportTarget, Prometheus};
+
+    #[test]
+    fn test_default_config() {
+        let default_config = Config::default();
+
+        assert_eq!(default_config.service_name, "App");
+        assert_eq!(default_config.enterprise_number, None);
+        assert_eq!(default_config.prometheus_config, None);
+        assert!(default_config.resource_attributes.is_none());
+        assert!(default_config.metrics_export_targets.is_none());
+        assert!(default_config.log_export_targets.is_none());
+        assert!(!default_config.emit_metrics_to_stdout);
+        assert!(default_config.emit_logs_to_stderr);
+        assert_eq!(default_config.level, "info".to_owned());
+    }
+
+    #[test]
+    fn test_default_prometheus_config() {
+        let prometheus_config = Prometheus::default();
+        assert_eq!(prometheus_config.port, 9600);
+    }
+
+    #[test]
+    fn test_config() {
+        let prometheus_config = Some(Prometheus { port: 9090 });
+        let metric_url = "testmetricurl".to_owned();
+        let log_url = "testlogurl".to_owned();
+
+        let metric_targets = vec![MetricsExportTarget {
+            url: metric_url,
+            interval_secs: 1,
+            timeout: 5,
+            temporality: Some(Temporality::Cumulative),
+        }];
+        let logs_targets = vec![LogsExportTarget {
+            url: log_url,
+            interval_secs: 1,
+            timeout: 5,
+            export_severity: Some(Severity::Error),
+        }];
+
+        let config = Config {
+            emit_metrics_to_stdout: false,
+            metrics_export_targets: Some(metric_targets),
+            log_export_targets: Some(logs_targets),
+            level: "info,hyper=off".to_owned(),
+            service_name: "test-app".to_owned(),
+            enterprise_number: Some("123".to_owned()),
+            resource_attributes: Some(vec![Attribute {
+                key: "resource_key1".to_owned(),
+                value: "1".to_owned(),
+            }]),
+            prometheus_config,
+            emit_logs_to_stderr: false,
+        };
+
+        assert_eq!(config.service_name, "test-app");
+        assert_eq!(config.enterprise_number, Some("123".to_owned()));
+        assert!(!config.emit_metrics_to_stdout);
+        assert!(!config.emit_logs_to_stderr);
+        assert_eq!(config.level, "info,hyper=off".to_owned());
+    }
+}
