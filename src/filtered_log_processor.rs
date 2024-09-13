@@ -21,11 +21,13 @@ use opentelemetry::{
 use opentelemetry_sdk::{
     export::logs::{ExportResult, LogData, LogExporter},
     logs::LogProcessor,
+    Resource,
 };
 
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Formatter},
+    sync::Arc,
     time::Duration,
 };
 
@@ -83,6 +85,13 @@ impl<R: RuntimeChannel> LogProcessor for FilteredBatchLogProcessor<R> {
         futures_executor::block_on(res_receiver)
             .map_err(|err| LogError::Other(err.into()))
             .and_then(std::convert::identity)
+    }
+
+    fn set_resource(&self, resource: &Resource) {
+        let resource = Arc::new(resource.clone());
+        let _ = self
+            .message_sender
+            .try_send(BatchMessage::SetResource(resource));
     }
 
     fn event_enabled(
@@ -180,6 +189,11 @@ impl<R: RuntimeChannel> FilteredBatchLogProcessor<R> {
                         }
 
                         break;
+                    }
+
+                    // propagate the resource
+                    BatchMessage::SetResource(resource) => {
+                        exporter.set_resource(&resource);
                     }
                 }
             }
@@ -300,4 +314,6 @@ enum BatchMessage {
     Flush(Option<oneshot::Sender<ExportResult>>),
     /// Shut down the worker thread, push all logs in buffer to the backend.
     Shutdown(oneshot::Sender<ExportResult>),
+    /// Set the resource for the exporter.
+    SetResource(Arc<Resource>),
 }
