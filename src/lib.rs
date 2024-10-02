@@ -4,11 +4,13 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::time::Duration;
-
-use log::{error, info, warn};
+use std::{sync::Arc, time::Duration};
 
 use hyper::StatusCode;
+use hyper_util::rt::TokioIo;
+use log::{error, info, warn};
+
+use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod};
 use opentelemetry::{global, KeyValue};
 
 use axum::{http, Extension};
@@ -28,7 +30,9 @@ use opentelemetry_sdk::{
 use opentelemetry_stdout::MetricsExporterBuilder;
 
 use prometheus::{Encoder, Registry, TextEncoder};
-use tonic::transport::{Certificate, ClientTlsConfig};
+use tokio::net::TcpStream;
+use tokio_openssl::SslStream;
+use url::Url;
 
 use self::config::Config;
 
@@ -182,6 +186,7 @@ fn init_metrics(config: Config) -> (Option<PrometheusRegistry>, SdkMeterProvider
                 exporter_builder,
                 &export_target.url,
                 export_target.ca_cert_path,
+                Duration::from_secs(export_target.timeout),
             ) {
                 Ok(exporter_builder) => exporter_builder,
                 Err(_) => {
@@ -279,29 +284,102 @@ fn handle_tls(
     exporter_builder: TonicExporterBuilder,
     url: &str,
     ca_cert_path: Option<String>,
-) -> Result<TonicExporterBuilder, std::io::Error> {
-    if url.starts_with("https") || url.starts_with("grpcs") {
-        if let Some(ca_cert_path) = ca_cert_path {
-            let ca_cert = std::fs::read(ca_cert_path);
-            match ca_cert {
-                Ok(ca_cert) => {
-                    let ca_cert = Certificate::from_pem(ca_cert);
-                    let tls_config = ClientTlsConfig::new().ca_certificate(ca_cert);
-                    // TODO: Evaluate using an alternative mechanism for TLS to use OpenSSL instead of rustls.
-                    // This could mean using `with_channel` instead of `with_tls_config` or switching away
-                    // from gRPC to JSON/HTTPS.
+    timeout: Duration,
+) -> Result<TonicExporterBuilder, OtelError> {
+    let (server_name, server_port, scheme) = {
+        let url = Url::parse(url).map_err(OtelError::InvalidEndpointUrl)?;
+        let server_name = url
+            .host_str()
+            .ok_or(OtelError::EndpointMissingHost(url.to_string()))?
+            .to_owned();
+        let server_port = url
+            .port()
+            .ok_or(OtelError::EndpointMissingPort(url.to_string()))?;
+        (server_name, server_port, url.scheme().to_owned())
+    };
 
-                    Ok(exporter_builder.with_tls_config(tls_config))
-                }
-                Err(e) => {
-                    error!("unable to load ca_cert_file {:?}", e);
-                    Err(e)
-                }
-            }
+    let addr = format!("{server_name}:{server_port}");
+
+    if scheme.eq("https") || scheme.eq("grpcs") {
+        // replace https with http to avoid tonic bug that incorrectly assumes TLS is disabled when
+        // not using rustls to establish TLS connection (i.e. when using connect_with_connector_lazy()).
+        let url_modified = if scheme.eq("https") {
+            url.replace("https", "http")
         } else {
-            Ok(exporter_builder)
+            url.replace("grpcs", "grpc")
+        };
+
+        let tonic_endpoint = tonic::transport::channel::Endpoint::try_from(url_modified.clone())
+            .map_err(|e| {
+                OtelError::GrpcClientError(format!(
+                    "error creating tonic channel to {url_modified}: {e:?}",
+                ))
+            })?;
+
+        let method = SslMethod::tls();
+        let mut ssl_connector: SslConnectorBuilder =
+            SslConnector::builder(method).map_err(|e| {
+                OtelError::GrpcClientError(format!("error creating SSL connector: {e:?}"))
+            })?;
+
+        if let Some(ca_cert_path) = ca_cert_path {
+            ssl_connector
+                .set_ca_file(ca_cert_path.clone())
+                .map_err(|e| {
+                    OtelError::GrpcClientError(format!(
+                        "error setting CA file to {ca_cert_path:?}: {e}"
+                    ))
+                })?;
+        } else {
+            ssl_connector.set_default_verify_paths().map_err(|e| {
+                OtelError::GrpcClientError(format!("error setting default verify paths: {e}"))
+            })?;
         }
+
+        // Create a custom tonic connector that uses openssl instead of rustls
+        let ssl_connector = Arc::new(ssl_connector.build());
+        let custom_connector = tower::service_fn(move |_: tonic::transport::Uri| {
+            let connector = Arc::clone(&ssl_connector);
+            let addr = addr.clone();
+            let server_name = server_name.clone();
+            async move {
+                let tcp_stream = TcpStream::connect(addr.clone()).await?;
+                let config = connector.configure()?;
+                let ssl = config.into_ssl(&server_name)?;
+                let mut ssl_stream = SslStream::new(ssl, tcp_stream)?;
+                std::pin::Pin::new(&mut ssl_stream).connect().await?;
+                Ok::<_, OtelError>(TokioIo::new(ssl_stream))
+            }
+        });
+        let channel = tonic_endpoint
+            .timeout(timeout)
+            .connect_with_connector_lazy(custom_connector);
+        Ok(exporter_builder.with_channel(channel))
     } else {
-        Ok(exporter_builder.with_tls_config(ClientTlsConfig::new().with_native_roots()))
+        Ok(exporter_builder)
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OtelError {
+    #[error("gRPC client error: {0:}")]
+    GrpcClientError(String),
+
+    #[error("io error: {0:?}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("failed to create TLS server config: {0:?}")]
+    TlsServerConfig(#[from] openssl::error::ErrorStack),
+
+    #[error("tls handshake error {0:?}")]
+    TlsError(#[from] openssl::ssl::Error),
+
+    #[error("could not parse endpoint url: {0:?}")]
+    InvalidEndpointUrl(#[source] url::ParseError),
+
+    #[error("could not parse port from endpoint: {0:?}")]
+    EndpointMissingPort(String),
+
+    #[error("could not parse host from endpoint: {0:?}")]
+    EndpointMissingHost(String),
 }
