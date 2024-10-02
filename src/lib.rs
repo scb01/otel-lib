@@ -13,7 +13,7 @@ use opentelemetry::{global, KeyValue};
 
 use axum::{http, Extension};
 
-use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
+use opentelemetry_otlp::{ExportConfig, Protocol, TonicExporterBuilder, WithExportConfig};
 use opentelemetry_sdk::{
     logs::LoggerProvider,
     metrics::{
@@ -23,8 +23,12 @@ use opentelemetry_sdk::{
     },
     runtime, Resource,
 };
+
+// TODO: evaluate if we should keep supporting writing metrics to stdout.
 use opentelemetry_stdout::MetricsExporterBuilder;
+
 use prometheus::{Encoder, Registry, TextEncoder};
+use tonic::transport::{Certificate, ClientTlsConfig};
 
 use self::config::Config;
 
@@ -173,8 +177,19 @@ fn init_metrics(config: Config) -> (Option<PrometheusRegistry>, SdkMeterProvider
                     Box::new(DefaultTemporalitySelector::new())
                 };
 
-            let exporter = match opentelemetry_otlp::new_exporter()
-                .tonic()
+            let mut exporter_builder = opentelemetry_otlp::new_exporter().tonic();
+            exporter_builder = match handle_tls(
+                exporter_builder,
+                &export_target.url,
+                export_target.ca_cert_path,
+            ) {
+                Ok(exporter_builder) => exporter_builder,
+                Err(_) => {
+                    continue;
+                }
+            };
+
+            let exporter = match exporter_builder
                 .with_export_config(export_config)
                 .build_metrics_exporter(
                     // TODO: Make this also part of config?
@@ -257,5 +272,36 @@ async fn metrics_handler(
             [(http::header::CONTENT_TYPE, "text".to_string())],
             e.to_string(),
         )),
+    }
+}
+
+fn handle_tls(
+    exporter_builder: TonicExporterBuilder,
+    url: &str,
+    ca_cert_path: Option<String>,
+) -> Result<TonicExporterBuilder, std::io::Error> {
+    if url.starts_with("https") || url.starts_with("grpcs") {
+        if let Some(ca_cert_path) = ca_cert_path {
+            let ca_cert = std::fs::read(ca_cert_path);
+            match ca_cert {
+                Ok(ca_cert) => {
+                    let ca_cert = Certificate::from_pem(ca_cert);
+                    let tls_config = ClientTlsConfig::new().ca_certificate(ca_cert);
+                    // TODO: Evaluate using an alternative mechanism for TLS to use OpenSSL instead of rustls.
+                    // This could mean using `with_channel` instead of `with_tls_config` or switching away
+                    // from gRPC to JSON/HTTPS.
+
+                    Ok(exporter_builder.with_tls_config(tls_config))
+                }
+                Err(e) => {
+                    error!("unable to load ca_cert_file {:?}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            Ok(exporter_builder)
+        }
+    } else {
+        Ok(exporter_builder.with_tls_config(ClientTlsConfig::new().with_native_roots()))
     }
 }
