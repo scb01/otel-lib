@@ -4,12 +4,14 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use hyper::StatusCode;
 use hyper_util::rt::TokioIo;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use openssl::ssl::{SslConnector, SslConnectorBuilder, SslMethod};
 use opentelemetry::{global, KeyValue};
 
@@ -30,7 +32,7 @@ use opentelemetry_sdk::{
 use opentelemetry_stdout::MetricsExporterBuilder;
 
 use prometheus::{Encoder, Registry, TextEncoder};
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::mpsc};
 use tokio_openssl::SslStream;
 use url::Url;
 
@@ -52,6 +54,9 @@ pub struct Otel {
     registry: Option<PrometheusRegistry>,
     meter_provider: SdkMeterProvider,
     logger_provider: Option<LoggerProvider>,
+    ca_cert_paths: HashSet<String>,
+    shutdown_tx: mpsc::Sender<()>,
+    shutdown_rx: mpsc::Receiver<()>,
 }
 
 impl Otel {
@@ -65,27 +70,88 @@ impl Otel {
             }
         };
 
-        let (registry, meter_provider) = init_metrics(config);
+        let (registry, meter_provider) = init_metrics(config.clone());
+
+        // Gather a list of CA cert paths from logs and metrics config
+        let mut ca_cert_paths: HashSet<String> = HashSet::new();
+        if let Some(metric_targets) = config.metrics_export_targets {
+            for metric_target in metric_targets {
+                if let Some(ca_cert_path) = &metric_target.ca_cert_path {
+                    ca_cert_paths.insert(ca_cert_path.clone());
+                }
+            }
+        }
+        if let Some(log_targets) = config.log_export_targets {
+            for log_target in log_targets {
+                if let Some(ca_cert_path) = &log_target.ca_cert_path {
+                    ca_cert_paths.insert(ca_cert_path.clone());
+                }
+            }
+        }
+
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+
         Otel {
             registry,
             meter_provider,
             logger_provider,
+            ca_cert_paths,
+            shutdown_tx,
+            shutdown_rx,
         }
     }
 
     /// Long running tasks for otel propagation.
-    pub async fn run(&self) {
-        if let Some(prometheus_registry) = &self.registry {
-            let _ = httpserver_init(
-                prometheus_registry.port,
-                prometheus_registry.registry.clone(),
-            )
-            .await;
+    ///
+    /// # Errors
+    /// * `OtelError::WatcherError` - If there is an error with the CA file watcher
+    pub async fn run(&mut self) -> Result<(), OtelError> {
+        // Create watcher task to detect changes to the CA files
+        let (mut ca_watcher, mut ca_watcher_rx) = create_watcher()?;
+        self.ca_cert_paths.iter().for_each(|path| {
+            let _ = ca_watcher
+                .watcher()
+                .watch(&PathBuf::from(path), RecursiveMode::NonRecursive);
+            debug!("watching for changes to {}", path);
+        });
+
+        tokio::select! {
+            notification = ca_watcher_rx.recv(), if !self.ca_cert_paths.is_empty() => {
+                match notification {
+                    Some(Ok(event)) => {
+                        info!("CA cert path changed: {event:?}");
+                    }
+                    Some(Err(e)) => {
+                        error!("error received from CA file watcher: {e:?}");
+                    }
+                    None => {
+                        warn!("CA file watcher channel closed.");
+                    }
+                }
+                warn!("Exiting to allow restart of component.");
+                return Err(OtelError::CaWatcherEvent)
+            }
+            () = async {
+                if let Some(prometheus_registry) = &self.registry {
+                    let _ = httpserver_init(
+                        prometheus_registry.port,
+                        prometheus_registry.registry.clone(),
+                    ).await;
+                }
+            }, if self.registry.is_some() => {
+                error!("prometheus server stopped. Exiting.");
+                return Err(OtelError::PrometheusServerStopped)
+            }
+            _ = self.shutdown_rx.recv() => {
+                info!("shutting down otel component");
+            }
         }
+
+        Ok(())
     }
 
     /// Graceful shutdown that flushes any pending metrics and logs to the exporter.
-    pub fn shutdown(&self) {
+    pub async fn shutdown(&self) {
         if let Err(metrics_error) = self.meter_provider.force_flush() {
             warn!(
                 "ecountered error while flushing metrics: {:?}",
@@ -103,7 +169,35 @@ impl Otel {
             logger_provider.force_flush();
             let _ = logger_provider.shutdown();
         }
+
+        let _ = self.shutdown_tx.send(()).await;
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn create_watcher() -> Result<
+    (
+        Debouncer<RecommendedWatcher>,
+        mpsc::Receiver<Result<Vec<DebouncedEvent>, notify::Error>>,
+    ),
+    OtelError,
+> {
+    // Create async channel for watcher notifications
+    let (async_tx, async_rx) = mpsc::channel(1);
+
+    // Create watcher with event handler that sends events to async channel
+    let watcher = new_debouncer(Duration::from_secs(1), move |res| {
+        let async_tx = async_tx.clone();
+        futures::executor::block_on(async {
+            if let Err(e) = async_tx.send(res).await {
+                error!("error sending watcher notification: {e}");
+            }
+        });
+    })
+    .map_err(OtelError::WatcherError)?;
+
+    // Return watch and receiver
+    Ok((watcher, async_rx))
 }
 
 #[derive(Default, Debug)]
@@ -382,4 +476,13 @@ pub enum OtelError {
 
     #[error("could not parse host from endpoint: {0:?}")]
     EndpointMissingHost(String),
+
+    #[error("watcher error: {0:?}")]
+    WatcherError(#[from] notify::Error),
+
+    #[error("CA path watcher event occurred")]
+    CaWatcherEvent,
+
+    #[error("prometheus server stopped")]
+    PrometheusServerStopped,
 }
