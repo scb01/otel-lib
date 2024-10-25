@@ -91,7 +91,6 @@ pub struct MockServer {
     pub metrics_rx: Receiver<ExportMetricsServiceRequest>,
     pub logs_rx: Receiver<ExportLogsServiceRequest>,
     pub server: OtlpServer,
-    pub auth_enabled: bool,
 }
 
 impl MockServer {
@@ -129,7 +128,6 @@ impl MockServer {
             metrics_rx,
             logs_rx,
             server,
-            auth_enabled,
         }
     }
 }
