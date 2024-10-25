@@ -34,9 +34,11 @@ use tokio_openssl::SslStream;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{
     async_trait,
+    service::interceptor,
     transport::{server::Connected, Server},
     Request, Response, Status,
 };
+use tower::ServiceBuilder;
 use uuid::Uuid;
 pub struct TlsStream(pub SslStream<TcpStream>);
 impl Connected for TlsStream {
@@ -89,6 +91,7 @@ pub struct MockServer {
     pub metrics_rx: Receiver<ExportMetricsServiceRequest>,
     pub logs_rx: Receiver<ExportLogsServiceRequest>,
     pub server: OtlpServer,
+    pub auth_enabled: bool,
 }
 
 impl MockServer {
@@ -98,7 +101,7 @@ impl MockServer {
     /// # Panics
     ///
     /// Will panic if socketaddr parse fails
-    pub fn new(port: u16, self_signed_cert: Option<SelfSignedCert>) -> Self {
+    pub fn new(port: u16, self_signed_cert: Option<SelfSignedCert>, auth_enabled: bool) -> Self {
         // Setup mock otlp server
         let socketaddr = format!("127.0.0.1:{port}");
 
@@ -117,6 +120,7 @@ impl MockServer {
             metrics_tx,
             logs_tx,
             self_signed_cert,
+            auth_enabled,
         );
 
         Self {
@@ -125,6 +129,7 @@ impl MockServer {
             metrics_rx,
             logs_rx,
             server,
+            auth_enabled,
         }
     }
 }
@@ -135,6 +140,7 @@ pub struct OtlpServer {
     echo_metric_tx: Sender<ExportMetricsServiceRequest>,
     echo_logs_tx: Sender<ExportLogsServiceRequest>,
     self_signed_cert: Option<SelfSignedCert>,
+    auth_enabled: bool,
 }
 
 impl OtlpServer {
@@ -144,6 +150,7 @@ impl OtlpServer {
         echo_metric_tx: Sender<ExportMetricsServiceRequest>,
         echo_logs_tx: Sender<ExportLogsServiceRequest>,
         self_signed_cert: Option<SelfSignedCert>,
+        auth_enabled: bool,
     ) -> Self {
         Self {
             endpoint,
@@ -151,6 +158,7 @@ impl OtlpServer {
             echo_metric_tx,
             echo_logs_tx,
             self_signed_cert,
+            auth_enabled,
         }
     }
 
@@ -160,8 +168,11 @@ impl OtlpServer {
     /// Will panic if the port is already in use
     ///
     pub async fn run(self) {
-        let mut server_builder = Server::builder();
         let listener = TcpListener::bind(self.endpoint).await.unwrap();
+
+        let metrics_service =
+            MetricsServiceServer::new(MockMetricsService::new(self.echo_metric_tx));
+        let logs_service = LogsServiceServer::new(MockLogsService::new(self.echo_logs_tx));
 
         if let Some(self_signed_cert) = self.self_signed_cert {
             let mut ssl_builder = SslAcceptor::mozilla_modern(SslMethod::tls()).unwrap();
@@ -210,32 +221,52 @@ impl OtlpServer {
                 }
             };
 
-            let () = server_builder
-                .add_service(MetricsServiceServer::new(MockMetricsService::new(
-                    self.echo_metric_tx,
-                )))
-                .add_service(LogsServiceServer::new(MockLogsService::new(
-                    self.echo_logs_tx,
-                )))
-                .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
-                .await
-                .unwrap();
+            if self.auth_enabled {
+                Server::builder()
+                    .layer(ServiceBuilder::new().layer(interceptor(Self::auth_interceptor)))
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            } else {
+                Server::builder()
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            }
         } else {
             // Create incoming TCP stream listener
             let incoming = TcpListenerStream::new(listener);
-
-            // Start the server
-            server_builder
-                .add_service(MetricsServiceServer::new(MockMetricsService::new(
-                    self.echo_metric_tx,
-                )))
-                .add_service(LogsServiceServer::new(MockLogsService::new(
-                    self.echo_logs_tx,
-                )))
-                .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
-                .await
-                .unwrap();
+            if self.auth_enabled {
+                // Start the server
+                Server::builder()
+                    .layer(ServiceBuilder::new().layer(interceptor(Self::auth_interceptor)))
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            } else {
+                Server::builder()
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            }
         }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn auth_interceptor(request: Request<()>) -> Result<Request<()>, Status> {
+        // TODO: investigate how to also assert that the authorization header is different for each request.
+        // The check below only looks for the presence of the header.
+        let metadata = request.metadata();
+        assert!(metadata.contains_key("authorization"));
+        Ok(request)
     }
 }
 

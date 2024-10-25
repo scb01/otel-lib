@@ -9,7 +9,7 @@ use std::{
 use crate::{
     config::Config,
     filtered_log_processor::{FilteredBatchConfig, FilteredBatchLogProcessor},
-    handle_tls, syslog_writer, SERVICE_NAME_KEY,
+    handle_tls, syslog_writer, AuthIntercepter, SERVICE_NAME_KEY,
 };
 use log::Level;
 use opentelemetry::{
@@ -126,6 +126,13 @@ pub(crate) fn init_logs(config: Config) -> Result<LoggerProvider, log::SetLogger
     if let Some(export_target_list) = config.log_export_targets {
         for export_target in export_target_list {
             let mut exporter_builder = opentelemetry_otlp::new_exporter().tonic();
+            if let Some(bearer_token_provider_fn) = export_target.bearer_token_provider_fn {
+                let auth_interceptor = AuthIntercepter {
+                    bearer_token_provider_fn,
+                };
+                exporter_builder = exporter_builder.with_interceptor(auth_interceptor);
+            }
+
             exporter_builder = match handle_tls(
                 exporter_builder,
                 &export_target.url,

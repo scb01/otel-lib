@@ -5,9 +5,8 @@ use opentelemetry::logs::Severity;
 use opentelemetry_sdk::metrics::data::Temporality;
 use serde::Deserialize;
 
-#[derive(Clone, Debug)]
-
 /// Observability configuration
+#[derive(Clone, Debug)]
 pub struct Config {
     /// name of the component, for example "App"
     pub service_name: String,
@@ -74,6 +73,8 @@ pub struct MetricsExportTarget {
     pub temporality: Option<Temporality>,
     /// path to the ca cert
     pub ca_cert_path: Option<String>,
+    /// a fn that provides the bearer token, which will be called to get the token for each export request
+    pub bearer_token_provider_fn: Option<fn() -> String>,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +90,8 @@ pub struct LogsExportTarget {
     pub export_severity: Option<Severity>,
     /// path to root ca cert
     pub ca_cert_path: Option<String>,
+    /// a fn that provides the bearer token, which will be called to get the token for each export request
+    pub bearer_token_provider_fn: Option<fn() -> String>,
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +140,7 @@ mod tests {
             timeout: 5,
             temporality: Some(Temporality::Cumulative),
             ca_cert_path: None,
+            bearer_token_provider_fn: None,
         }];
         let logs_targets = vec![LogsExportTarget {
             url: log_url,
@@ -144,6 +148,7 @@ mod tests {
             timeout: 5,
             export_severity: Some(Severity::Error),
             ca_cert_path: None,
+            bearer_token_provider_fn: Some(get_dummy_auth_token),
         }];
 
         let config = Config {
@@ -166,5 +171,9 @@ mod tests {
         assert!(!config.emit_metrics_to_stdout);
         assert!(!config.emit_logs_to_stderr);
         assert_eq!(config.level, "info,hyper=off".to_owned());
+    }
+
+    fn get_dummy_auth_token() -> String {
+        "test".to_owned()
     }
 }

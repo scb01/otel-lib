@@ -4,7 +4,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use hyper::StatusCode;
 use hyper_util::rt::TokioIo;
@@ -34,6 +34,7 @@ use opentelemetry_stdout::MetricsExporterBuilder;
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_openssl::SslStream;
+use tonic::{metadata::AsciiMetadataValue, service::Interceptor, Status};
 use url::Url;
 
 use self::config::Config;
@@ -276,6 +277,12 @@ fn init_metrics(config: Config) -> (Option<PrometheusRegistry>, SdkMeterProvider
                 };
 
             let mut exporter_builder = opentelemetry_otlp::new_exporter().tonic();
+            if let Some(bearer_token_provider_fn) = export_target.bearer_token_provider_fn {
+                let auth_interceptor = AuthIntercepter {
+                    bearer_token_provider_fn,
+                };
+                exporter_builder = exporter_builder.with_interceptor(auth_interceptor);
+            }
             exporter_builder = match handle_tls(
                 exporter_builder,
                 &export_target.url,
@@ -485,4 +492,27 @@ pub enum OtelError {
 
     #[error("prometheus server stopped")]
     PrometheusServerStopped,
+}
+
+#[derive(Clone)]
+struct AuthIntercepter {
+    bearer_token_provider_fn: fn() -> String,
+}
+
+impl Interceptor for AuthIntercepter {
+    fn call(&mut self, request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        let bearer_token = (self.bearer_token_provider_fn)();
+        let mut modified_request = request;
+        let metadata = modified_request.metadata_mut();
+
+        match AsciiMetadataValue::from_str(&format!("Bearer {bearer_token}")) {
+            Ok(auth_header) => {
+                metadata.append("authorization", auth_header);
+            }
+            Err(e) => {
+                error!("unable to set auth header due to {e:?}");
+            }
+        }
+        Ok(modified_request)
+    }
 }

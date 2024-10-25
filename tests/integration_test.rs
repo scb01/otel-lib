@@ -26,6 +26,7 @@ use otel_lib::{
 use port_check::free_local_port_in_range;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 mod mocks;
 
@@ -45,27 +46,44 @@ mod mocks;
 async fn end_to_end_test() {
     // Setup mock otlp servers for filtered logs
     let self_signed_cert = generate_self_signed_cert();
+    let auth_enabled = true;
+    let auth_disabled = false;
 
-    let filtered_target = MockServer::new(free_local_port_in_range(10000..=10100).unwrap(), None);
+    // Server with filters, auth, and no tls
+    let filtered_target = MockServer::new(
+        free_local_port_in_range(10000..=10100).unwrap(),
+        None,
+        auth_enabled,
+    );
     tokio::spawn(async {
         filtered_target.server.run().await;
     });
+
+    // Server with filters, auth, and tls
     let filtered_target_with_tls = MockServer::new(
         free_local_port_in_range(10100..=10200).unwrap(),
         Some(self_signed_cert.clone()),
+        auth_enabled,
     );
     tokio::spawn(async {
         filtered_target_with_tls.server.run().await;
     });
 
-    // Setup mock otlp servers for unfiltered logs
-    let unfiltered_target = MockServer::new(free_local_port_in_range(10200..=10300).unwrap(), None);
+    // Server with no filter, no auth, no tls
+    let unfiltered_target = MockServer::new(
+        free_local_port_in_range(10200..=10300).unwrap(),
+        None,
+        auth_disabled,
+    );
     tokio::spawn(async {
         unfiltered_target.server.run().await;
     });
+
+    // Server with tls, no filter and no auth
     let unfiltered_target_with_tls = MockServer::new(
         free_local_port_in_range(10300..=10400).unwrap(),
         Some(self_signed_cert.clone()),
+        auth_disabled,
     );
     tokio::spawn(async {
         unfiltered_target_with_tls.server.run().await;
@@ -82,6 +100,7 @@ async fn end_to_end_test() {
             timeout: 5,
             temporality: Some(Temporality::Cumulative),
             ca_cert_path: None,
+            bearer_token_provider_fn: Some(get_test_bearer_token),
         },
         MetricsExportTarget {
             url: filtered_target_with_tls.endpoint.clone(),
@@ -89,6 +108,7 @@ async fn end_to_end_test() {
             timeout: 5,
             temporality: Some(Temporality::Cumulative),
             ca_cert_path: Some(self_signed_cert.get_ca_cert_path()),
+            bearer_token_provider_fn: Some(get_test_bearer_token),
         },
         MetricsExportTarget {
             url: unfiltered_target.endpoint.clone(),
@@ -96,6 +116,7 @@ async fn end_to_end_test() {
             timeout: 5,
             temporality: Some(Temporality::Delta),
             ca_cert_path: None,
+            bearer_token_provider_fn: None,
         },
         MetricsExportTarget {
             url: unfiltered_target_with_tls.endpoint.clone(),
@@ -103,6 +124,7 @@ async fn end_to_end_test() {
             timeout: 5,
             temporality: Some(Temporality::Delta),
             ca_cert_path: Some(self_signed_cert.get_ca_cert_path()),
+            bearer_token_provider_fn: None,
         },
     ];
 
@@ -113,6 +135,7 @@ async fn end_to_end_test() {
             timeout: 5,
             export_severity: Some(Severity::Error),
             ca_cert_path: None,
+            bearer_token_provider_fn: Some(get_test_bearer_token),
         },
         LogsExportTarget {
             url: filtered_target_with_tls.endpoint.clone(),
@@ -120,6 +143,7 @@ async fn end_to_end_test() {
             timeout: 5,
             export_severity: Some(Severity::Error),
             ca_cert_path: Some(self_signed_cert.get_ca_cert_path()),
+            bearer_token_provider_fn: Some(get_test_bearer_token),
         },
         LogsExportTarget {
             url: unfiltered_target.endpoint,
@@ -127,6 +151,7 @@ async fn end_to_end_test() {
             timeout: 5,
             export_severity: None,
             ca_cert_path: None,
+            bearer_token_provider_fn: None,
         },
         LogsExportTarget {
             url: unfiltered_target_with_tls.endpoint,
@@ -134,6 +159,7 @@ async fn end_to_end_test() {
             timeout: 5,
             export_severity: None,
             ca_cert_path: Some(self_signed_cert.get_ca_cert_path()),
+            bearer_token_provider_fn: None,
         },
     ];
 
@@ -181,8 +207,6 @@ async fn end_to_end_test() {
             panic!("Otel component did not exit on CA cert change: {e:?}");
         }
     }
-
-    // TODO: troubleshoot why calling `otel_component.shutdown()` blocks test execution here.
 
     filtered_target.shutdown_tx.send(()).await.unwrap();
     unfiltered_target.shutdown_tx.send(()).await.unwrap();
@@ -412,4 +436,9 @@ async fn validate_unfiltered_logs(
     assert!(timeout(Duration::from_secs(2), logs_rx.recv())
         .await
         .is_err());
+}
+
+// Dummy method that just passes in an UUID as a bearer token
+fn get_test_bearer_token() -> String {
+    format!("{}", Uuid::new_v4())
 }
