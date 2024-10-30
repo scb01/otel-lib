@@ -263,11 +263,12 @@ impl OtlpServer {
 
     #[allow(clippy::unnecessary_wraps)]
     fn auth_interceptor(request: Request<()>) -> Result<Request<()>, Status> {
-        // TODO: investigate how to also assert that the authorization header is different for each request.
-        // The check below only looks for the presence of the header.
-        let metadata = request.metadata();
-        assert!(metadata.contains_key("authorization"));
-        let header_value = metadata.get("authorization").unwrap().to_str().unwrap();
+        let header_value = request
+            .metadata()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert_eq!(header_value, format!("Bearer {}", get_test_bearer_token()));
         Ok(request)
     }
