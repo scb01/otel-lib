@@ -5,7 +5,7 @@
 
 use std::{
     fs::{remove_file, File},
-    io::Write,
+    io::{Read, Write},
     net::SocketAddr,
     path::PathBuf,
     pin::Pin,
@@ -40,6 +40,9 @@ use tonic::{
 };
 use tower::ServiceBuilder;
 use uuid::Uuid;
+
+const BEARER_TOKEN_FILE: &str = "token.txt";
+
 pub struct TlsStream(pub SslStream<TcpStream>);
 impl Connected for TlsStream {
     type ConnectInfo = std::net::SocketAddr;
@@ -264,6 +267,8 @@ impl OtlpServer {
         // The check below only looks for the presence of the header.
         let metadata = request.metadata();
         assert!(metadata.contains_key("authorization"));
+        let header_value = metadata.get("authorization").unwrap().to_str().unwrap();
+        assert_eq!(header_value, format!("Bearer {}", get_test_bearer_token()));
         Ok(request)
     }
 }
@@ -367,4 +372,36 @@ impl MockMetricsService {
     fn new(echo_sender: Sender<ExportMetricsServiceRequest>) -> Self {
         Self { echo_sender }
     }
+}
+
+/// Create or update a bearer token
+///
+/// # Panics
+///
+/// Will panic if creating the file or the write of the token to the file fails
+pub fn create_or_update_bearer_token() {
+    let token = format!("{}", Uuid::new_v4());
+    let mut file = File::create(BEARER_TOKEN_FILE).unwrap();
+    file.write_all(token.as_bytes()).unwrap();
+}
+
+/// retrieve a bearer token
+///
+/// # Panics
+///
+/// Will panic if opening the file or reading from it fails.
+pub(crate) fn get_test_bearer_token() -> String {
+    let mut file = File::open(BEARER_TOKEN_FILE).unwrap();
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).unwrap();
+    buf
+}
+
+/// delete the bearer token file
+///
+/// # Panics
+///
+/// Will panic if removing the file fails.
+pub fn clean_up_bearer_token() {
+    remove_file(BEARER_TOKEN_FILE).unwrap();
 }

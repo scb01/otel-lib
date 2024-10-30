@@ -11,7 +11,10 @@ use std::time::{Duration, SystemTime};
 
 use filetime::{set_file_mtime, FileTime};
 use log::{debug, error, info, trace, warn};
-use mocks::{generate_self_signed_cert, MockServer};
+use mocks::{
+    clean_up_bearer_token, create_or_update_bearer_token, generate_self_signed_cert,
+    get_test_bearer_token, MockServer,
+};
 use opentelemetry::{global, logs::Severity, metrics::MeterProvider};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
@@ -26,7 +29,9 @@ use otel_lib::{
 use port_check::free_local_port_in_range;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
-use uuid::Uuid;
+
+const AUTH_ENABLED: bool = true;
+const AUTH_DISABLED: bool = false;
 
 mod mocks;
 
@@ -46,14 +51,12 @@ mod mocks;
 async fn end_to_end_test() {
     // Setup mock otlp servers for filtered logs
     let self_signed_cert = generate_self_signed_cert();
-    let auth_enabled = true;
-    let auth_disabled = false;
 
     // Server with filters, auth, and no tls
     let filtered_target = MockServer::new(
         free_local_port_in_range(10000..=10100).unwrap(),
         None,
-        auth_enabled,
+        AUTH_ENABLED,
     );
     tokio::spawn(async {
         filtered_target.server.run().await;
@@ -63,7 +66,7 @@ async fn end_to_end_test() {
     let filtered_target_with_tls = MockServer::new(
         free_local_port_in_range(10100..=10200).unwrap(),
         Some(self_signed_cert.clone()),
-        auth_enabled,
+        AUTH_ENABLED,
     );
     tokio::spawn(async {
         filtered_target_with_tls.server.run().await;
@@ -73,7 +76,7 @@ async fn end_to_end_test() {
     let unfiltered_target = MockServer::new(
         free_local_port_in_range(10200..=10300).unwrap(),
         None,
-        auth_disabled,
+        AUTH_DISABLED,
     );
     tokio::spawn(async {
         unfiltered_target.server.run().await;
@@ -83,7 +86,7 @@ async fn end_to_end_test() {
     let unfiltered_target_with_tls = MockServer::new(
         free_local_port_in_range(10300..=10400).unwrap(),
         Some(self_signed_cert.clone()),
-        auth_disabled,
+        AUTH_DISABLED,
     );
     tokio::spawn(async {
         unfiltered_target_with_tls.server.run().await;
@@ -211,6 +214,7 @@ async fn end_to_end_test() {
     filtered_target.shutdown_tx.send(()).await.unwrap();
     unfiltered_target.shutdown_tx.send(()).await.unwrap();
     let () = self_signed_cert.cleanup();
+    clean_up_bearer_token();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -227,6 +231,7 @@ async fn run_tests(
     sample_attribute: &Attribute,
     prom_port: u16,
 ) {
+    create_or_update_bearer_token();
     let meter = global::meter_provider().meter("end_to_end_test");
     let test_counter = meter.u64_counter("test_counter").init();
     test_counter.add(1, &[]);
@@ -261,6 +266,7 @@ async fn run_tests(
     // validate the metric is available at the prom endpoint
     validate_test_counter_prometheus(prom_port).await;
 
+    create_or_update_bearer_token();
     // test logs
 
     let trace_log = "this is a trace debug message";
@@ -436,9 +442,4 @@ async fn validate_unfiltered_logs(
     assert!(timeout(Duration::from_secs(2), logs_rx.recv())
         .await
         .is_err());
-}
-
-// Dummy method that just passes in an UUID as a bearer token
-fn get_test_bearer_token() -> String {
-    format!("{}", Uuid::new_v4())
 }
