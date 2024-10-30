@@ -34,6 +34,7 @@ async fn main() {
                 timeout: 5,
                 temporality: Some(Temporality::Cumulative),
                 ca_cert_path: args.ca_cert_path.clone(),
+                bearer_token_provider_fn: Some(get_dummy_bearer_token),
             }];
             let logs_targets = vec![LogsExportTarget {
                 url,
@@ -41,6 +42,7 @@ async fn main() {
                 timeout: 5,
                 export_severity: Some(Severity::Error),
                 ca_cert_path: args.ca_cert_path,
+                bearer_token_provider_fn: Some(get_dummy_bearer_token),
             }];
             (Some(metric_targets), Some(logs_targets))
         }
@@ -72,7 +74,7 @@ async fn main() {
 
     // Run this loop for n iterations
     let instrumentation_task = tokio::spawn(async move {
-        for iteration in 1..args.num_iterations {
+        for iteration in 0..args.num_iterations {
             STATIC_METRICS.requests.add(1, &[]);
             STATIC_METRICS.request_sizes.record(25, &[]);
             let mut val: f64 = rand::thread_rng().gen();
@@ -110,4 +112,10 @@ struct Args {
     /// Otel Repository URL
     #[arg(short, long)]
     pub ca_cert_path: Option<String>,
+}
+
+// Dummy method that just passes in a static string as a token that
+// serves as an example.
+fn get_dummy_bearer_token() -> String {
+    format!("{}", "dummy token")
 }

@@ -31,6 +31,8 @@ let metric_targets = vec![MetricsExportTarget {
         interval_secs: 30,
         timeout: 15,
         temporality: Temporality::Cumulative, // Set to one of Some(Temporality::Cumulative) or Some(Temporality::Delta) or None (which defaults to Cumulative)
+        ca_cert_path: Some("path".to_owned()),
+        bearer_token_provider_fn: Some(token_provider_fn)
     }];
 
 let log_targets = vec![LogsExportTarget {
@@ -38,6 +40,8 @@ let log_targets = vec![LogsExportTarget {
     interval_secs: 10,
     timeout: 15,
     export_severity: Some(Severity::Error), // Applies an additional filter at the exporter level. This can be set to `None` if no additional filtering is required.
+    ca_cert_path: Some("path".to_owned()),
+    bearer_token_provider_fn: Some(token_provider_fn)
 }];
 
 // Setup Prometheus if needed.
@@ -58,36 +62,55 @@ let config = Config {
     prometheus_config,
     ..Config::default()
 };
+
+
+fn token_provider_fn() -> String {
+    // Implement as needed
+}
 ~~~
+
+Create a Struct called StaticMetrics
+~~~
+pub static STATIC_METRICS: Lazy<StaticMetrics> = Lazy::new(StaticMetrics::default);
+const METER_NAME: &str = "meter name";
+
+pub struct StaticMetrics {
+    pub requests: Counter<u64>,
+    pub errors: Counter<u64>
+    ...
+}
+
+impl Default for StaticMetrics {
+    fn default() -> Self {
+        info!("initializing static metrics");
+        let meter = global::meter_provider().meter(METER_NAME);
+        StaticMetrics {
+            requests: meter.u64_counter("requests").init(),
+            errors: meter.u64_counter("errors").init(),
+        }
+    }
+}
+
+// initialize static metrics
+let _ = STATIC_METRICS.requests;
+~~~
+
 
 #### Initialize and run
 ~~~
 let otel_long_running_task = Otel::new(config).run();
 ~~~
 
-// Drive the task using something like
+Drive the task using something like
 ~~~
  _ = tokio::join!(otel_long_running_task);
 ~~~
 
-This initializes a static item STATIC_METRICS of type StaticMetrics that you can tweak to instrument metrics for you code.
 
 #### Instrument metrics
 ~~~
-// Add a metric to StaticMetrics
-pub struct StaticMetrics {
-    pub requests: Counter<u64>,
-    ...
-
-// Initialize the metric
-    let meter = global::meter_provider().meter(METER_NAME);
-    StaticMetrics {
-        requests: meter.u64_counter("requests").init(),
-        ...
-    }
-
 // add a data point where needed
- STATIC_METRICS.requests.add(1, &[]);
+ STATIC_METRICS.errors.add(1, &[]);
 ~~~
 
 #### Instrument Logs

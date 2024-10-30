@@ -5,7 +5,7 @@
 
 use std::{
     fs::{remove_file, File},
-    io::Write,
+    io::{Read, Write},
     net::SocketAddr,
     path::PathBuf,
     pin::Pin,
@@ -34,10 +34,15 @@ use tokio_openssl::SslStream;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{
     async_trait,
+    service::interceptor,
     transport::{server::Connected, Server},
     Request, Response, Status,
 };
+use tower::ServiceBuilder;
 use uuid::Uuid;
+
+const BEARER_TOKEN_FILE: &str = "token.txt";
+
 pub struct TlsStream(pub SslStream<TcpStream>);
 impl Connected for TlsStream {
     type ConnectInfo = std::net::SocketAddr;
@@ -98,7 +103,7 @@ impl MockServer {
     /// # Panics
     ///
     /// Will panic if socketaddr parse fails
-    pub fn new(port: u16, self_signed_cert: Option<SelfSignedCert>) -> Self {
+    pub fn new(port: u16, self_signed_cert: Option<SelfSignedCert>, auth_enabled: bool) -> Self {
         // Setup mock otlp server
         let socketaddr = format!("127.0.0.1:{port}");
 
@@ -117,6 +122,7 @@ impl MockServer {
             metrics_tx,
             logs_tx,
             self_signed_cert,
+            auth_enabled,
         );
 
         Self {
@@ -135,6 +141,7 @@ pub struct OtlpServer {
     echo_metric_tx: Sender<ExportMetricsServiceRequest>,
     echo_logs_tx: Sender<ExportLogsServiceRequest>,
     self_signed_cert: Option<SelfSignedCert>,
+    auth_enabled: bool,
 }
 
 impl OtlpServer {
@@ -144,6 +151,7 @@ impl OtlpServer {
         echo_metric_tx: Sender<ExportMetricsServiceRequest>,
         echo_logs_tx: Sender<ExportLogsServiceRequest>,
         self_signed_cert: Option<SelfSignedCert>,
+        auth_enabled: bool,
     ) -> Self {
         Self {
             endpoint,
@@ -151,6 +159,7 @@ impl OtlpServer {
             echo_metric_tx,
             echo_logs_tx,
             self_signed_cert,
+            auth_enabled,
         }
     }
 
@@ -160,8 +169,11 @@ impl OtlpServer {
     /// Will panic if the port is already in use
     ///
     pub async fn run(self) {
-        let mut server_builder = Server::builder();
         let listener = TcpListener::bind(self.endpoint).await.unwrap();
+
+        let metrics_service =
+            MetricsServiceServer::new(MockMetricsService::new(self.echo_metric_tx));
+        let logs_service = LogsServiceServer::new(MockLogsService::new(self.echo_logs_tx));
 
         if let Some(self_signed_cert) = self.self_signed_cert {
             let mut ssl_builder = SslAcceptor::mozilla_modern(SslMethod::tls()).unwrap();
@@ -210,32 +222,55 @@ impl OtlpServer {
                 }
             };
 
-            let () = server_builder
-                .add_service(MetricsServiceServer::new(MockMetricsService::new(
-                    self.echo_metric_tx,
-                )))
-                .add_service(LogsServiceServer::new(MockLogsService::new(
-                    self.echo_logs_tx,
-                )))
-                .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
-                .await
-                .unwrap();
+            if self.auth_enabled {
+                Server::builder()
+                    .layer(ServiceBuilder::new().layer(interceptor(Self::auth_interceptor)))
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            } else {
+                Server::builder()
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            }
         } else {
             // Create incoming TCP stream listener
             let incoming = TcpListenerStream::new(listener);
-
-            // Start the server
-            server_builder
-                .add_service(MetricsServiceServer::new(MockMetricsService::new(
-                    self.echo_metric_tx,
-                )))
-                .add_service(LogsServiceServer::new(MockLogsService::new(
-                    self.echo_logs_tx,
-                )))
-                .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
-                .await
-                .unwrap();
+            if self.auth_enabled {
+                // Start the server
+                Server::builder()
+                    .layer(ServiceBuilder::new().layer(interceptor(Self::auth_interceptor)))
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            } else {
+                Server::builder()
+                    .add_service(metrics_service)
+                    .add_service(logs_service)
+                    .serve_with_incoming_shutdown(incoming, recv_wrapper(self.shutdown_rx))
+                    .await
+                    .unwrap();
+            }
         }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn auth_interceptor(request: Request<()>) -> Result<Request<()>, Status> {
+        let header_value = request
+            .metadata()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(header_value, format!("Bearer {}", get_test_bearer_token()));
+        Ok(request)
     }
 }
 
@@ -338,4 +373,36 @@ impl MockMetricsService {
     fn new(echo_sender: Sender<ExportMetricsServiceRequest>) -> Self {
         Self { echo_sender }
     }
+}
+
+/// Create or update a bearer token
+///
+/// # Panics
+///
+/// Will panic if creating the file or the write of the token to the file fails
+pub fn create_or_update_bearer_token() {
+    let token = format!("{}", Uuid::new_v4());
+    let mut file = File::create(BEARER_TOKEN_FILE).unwrap();
+    file.write_all(token.as_bytes()).unwrap();
+}
+
+/// retrieve a bearer token
+///
+/// # Panics
+///
+/// Will panic if opening the file or reading from it fails.
+pub(crate) fn get_test_bearer_token() -> String {
+    let mut file = File::open(BEARER_TOKEN_FILE).unwrap();
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).unwrap();
+    buf
+}
+
+/// delete the bearer token file
+///
+/// # Panics
+///
+/// Will panic if removing the file fails.
+pub fn clean_up_bearer_token() {
+    remove_file(BEARER_TOKEN_FILE).unwrap();
 }
