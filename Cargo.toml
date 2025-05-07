@@ -50,7 +50,6 @@ filetime = "0.2"
 opentelemetry-proto = { version = "0.7", features = ["gen-tonic", "metrics", "logs"] }
 port_check="0.2"
 prost = "0.13"
-rcgen = "0.12"
 reqwest = { version = "0.12", default-features = false }
 tonic = { version = "0.12", features = ["codegen", "prost"] }
 tokio = { version= "1.3", features = ["parking_lot"] }

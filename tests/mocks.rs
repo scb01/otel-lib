@@ -13,7 +13,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use openssl::ssl::{Ssl, SslAcceptor, SslFiletype, SslMethod};
+use openssl::{
+    asn1::Asn1Time,
+    nid::Nid,
+    pkey::PKey,
+    rsa::Rsa,
+    ssl::{Ssl, SslAcceptor, SslFiletype, SslMethod},
+    x509::{extension::SubjectAlternativeName, X509Builder, X509NameBuilder},
+};
 use opentelemetry_proto::tonic::collector::{
     logs::v1::{
         logs_service_server::{LogsService, LogsServiceServer},
@@ -303,19 +310,56 @@ impl SelfSignedCert {
 /// Will panic if cert generation fails
 #[must_use]
 pub fn generate_self_signed_cert() -> SelfSignedCert {
+    // prefix for file name
     let prefix = Uuid::new_v4();
-    // Generate a self-signed cert and key
-    let cert =
-        rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
-    let cert_pem = cert.serialize_pem().unwrap();
+
+    // Generate RSA key
+    let rsa = Rsa::generate(2048).unwrap();
+    let pkey = PKey::from_rsa(rsa).unwrap();
+
+    // Build subject name
+    let mut name_builder = X509NameBuilder::new().unwrap();
+    name_builder
+        .append_entry_by_nid(Nid::COMMONNAME, "localhost")
+        .unwrap();
+    let name = name_builder.build();
+
+    // Build certificate
+    let mut builder = X509Builder::new().unwrap();
+    builder.set_version(2).unwrap();
+    builder.set_subject_name(&name).unwrap();
+    builder.set_issuer_name(&name).unwrap();
+    builder.set_pubkey(&pkey).unwrap();
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+        .unwrap();
+
+    // Add SAN extension
+    let san = SubjectAlternativeName::new()
+        .dns("localhost")
+        .dns("127.0.0.1")
+        .build(&builder.x509v3_context(None, None))
+        .unwrap();
+    builder.append_extension(san).unwrap();
+
+    // Sign and build
+    builder
+        .sign(&pkey, openssl::hash::MessageDigest::sha256())
+        .unwrap();
+    let cert = builder.build();
+
+    let cert_pem = cert.to_pem().unwrap();
     let cert_path = PathBuf::from(format!("./{prefix}_cert.pem"));
     let mut cert_file = File::create(cert_path.clone()).unwrap();
-    cert_file.write_all(cert_pem.as_bytes()).unwrap();
+    cert_file.write_all(&cert_pem).unwrap();
 
-    let key_pem = cert.serialize_private_key_pem();
+    let key_pem = pkey.private_key_to_pem_pkcs8().unwrap();
     let key_path = PathBuf::from(format!("./{prefix}_key.pem"));
     let mut key_file = File::create(key_path.clone()).unwrap();
-    key_file.write_all(key_pem.as_bytes()).unwrap();
+    key_file.write_all(&key_pem).unwrap();
 
     SelfSignedCert {
         server_cert: cert_path.clone(),
