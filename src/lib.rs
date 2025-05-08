@@ -66,7 +66,7 @@ impl Otel {
         let logger_provider = match loggers::init_logs(config.clone()) {
             Ok(logger_provider) => Some(logger_provider),
             Err(e) => {
-                warn!("unable to initialize otel logger as another library has already initialized a global logger:{:?}",e);
+                warn!("unable to initialize otel logger as another library has already initialized a global logger:{e:?}");
                 None
             }
         };
@@ -113,7 +113,7 @@ impl Otel {
             let _ = ca_watcher
                 .watcher()
                 .watch(&PathBuf::from(path), RecursiveMode::NonRecursive);
-            debug!("watching for changes to {}", path);
+            debug!("watching for changes to {path}");
         });
 
         tokio::select! {
@@ -154,16 +154,10 @@ impl Otel {
     /// Graceful shutdown that flushes any pending metrics and logs to the exporter.
     pub async fn shutdown(&self) {
         if let Err(metrics_error) = self.meter_provider.force_flush() {
-            warn!(
-                "ecountered error while flushing metrics: {:?}",
-                metrics_error
-            );
+            warn!("ecountered error while flushing metrics: {metrics_error:?}");
         }
         if let Err(metrics_error) = self.meter_provider.shutdown() {
-            warn!(
-                "ecountered error while shutting down meter provider: {:?}",
-                metrics_error
-            );
+            warn!("ecountered error while shutting down meter provider: {metrics_error:?}");
         }
 
         if let Some(logger_provider) = self.logger_provider.clone() {
@@ -248,7 +242,7 @@ fn init_metrics(config: Config) -> (Option<PrometheusRegistry>, SdkMeterProvider
                 })
             }
             Err(e) => {
-                error!("unable to setup prometheus endpoint due to: {:?}", e);
+                error!("unable to setup prometheus endpoint due to: {e:?}");
                 None
             }
         }
@@ -322,7 +316,7 @@ fn init_metrics(config: Config) -> (Option<PrometheusRegistry>, SdkMeterProvider
         let exporter = MetricsExporterBuilder::default()
             .with_encoder(|writer, data| {
                 if let Err(e) = serde_json::to_writer_pretty(writer, &data) {
-                    error!("writing metrics to log failed due to: {:?}", e);
+                    error!("writing metrics to log failed due to: {e:?}");
                 }
                 Ok(())
             })
